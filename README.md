@@ -16,6 +16,18 @@
 
 脚本内置 `@updateURL` 与 `@downloadURL`。首次从上述地址安装后，Tampermonkey 会按照自己的更新检查周期读取新版本，无需再次复制粘贴。
 
+## iOS / Shadowrocket
+
+iPhone 上的抖音和 B 站 App 不能运行 Tampermonkey 脚本，但可以通过 Shadowrocket 将两者的相关域名交给同一个节点。项目提供了一份合并规则：
+
+```text
+https://raw.githubusercontent.com/Orchidroot/douyin-web-accelerator/main/rules/shadowrocket-douyin-bilibili.list
+```
+
+在 Shadowrocket 当前配置的“规则”中新增远程 `RULE-SET`，粘贴该地址，将策略选为你的本地节点，并把它放在 `GEOIP,CN`、`FINAL` 等兜底规则之前。全局路由应选择“配置”。
+
+这份列表只做域名分流，不包含或替换节点订阅。抖音和 B 站共用同一份规则即可；以后换节点只需改规则所选策略。详细说明见 [rules/README.md](rules/README.md)。
+
 ## 工作方式
 
 - 在页面脚本读取播放数据时识别 `play_addr.url_list`、`playAddr.urlList` 等短视频候选地址。

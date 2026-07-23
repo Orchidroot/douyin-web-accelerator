@@ -1,0 +1,60 @@
+# NAME: Douyin + Bilibili
+# AUTHOR: Orchidroot
+# REPO: https://github.com/Orchidroot/douyin-web-accelerator
+# FORMAT: Shadowrocket RULE-SET
+#
+# This list only matches domains. Choose your own node or policy when adding
+# the remote RULE-SET in Shadowrocket.
+#
+# Douyin
+DOMAIN-SUFFIX,douyin.com
+DOMAIN-SUFFIX,amemv.com
+DOMAIN-SUFFIX,amemv.cn
+DOMAIN-SUFFIX,amemv.net
+DOMAIN-SUFFIX,douyincdn.com
+DOMAIN-SUFFIX,douyinliving.com
+DOMAIN-SUFFIX,douyinpic.com
+DOMAIN-SUFFIX,douyinstatic.com
+DOMAIN-SUFFIX,douyinvod.com
+DOMAIN-SUFFIX,idouyinpic.com
+DOMAIN-SUFFIX,idouyinstatic.com
+DOMAIN-SUFFIX,idouyinvod.com
+DOMAIN-SUFFIX,iesdouyin.com
+DOMAIN-SUFFIX,iesdouyin.net
+DOMAIN-SUFFIX,snssdk.com
+DOMAIN-SUFFIX,pstatp.com
+DOMAIN-SUFFIX,byteimg.com
+DOMAIN-SUFFIX,bytecdn.cn
+DOMAIN-SUFFIX,bytecdn.com
+DOMAIN-SUFFIX,bytefcdn.com
+DOMAIN-SUFFIX,bytedanceapi.com
+DOMAIN-SUFFIX,bytedancevod.com
+DOMAIN-SUFFIX,bytetos.com
+DOMAIN-SUFFIX,ibytedtos.com
+DOMAIN-SUFFIX,toscdn.com
+DOMAIN-SUFFIX,volccdn.com
+DOMAIN-SUFFIX,zjcdn.com
+DOMAIN-SUFFIX,zijiecdn.com
+
+# Bilibili
+DOMAIN-SUFFIX,b23.tv
+DOMAIN-SUFFIX,biliapi.com
+DOMAIN-SUFFIX,biliapi.net
+DOMAIN-SUFFIX,bilibili.com
+DOMAIN-SUFFIX,bilibili.tv
+DOMAIN-SUFFIX,biliintl.com
+DOMAIN-SUFFIX,biliimg.com
+DOMAIN-SUFFIX,bilivideo.cn
+DOMAIN-SUFFIX,bilivideo.com
+DOMAIN-SUFFIX,bilivideo.net
+DOMAIN-SUFFIX,bilicdn1.com
+DOMAIN-SUFFIX,bilicdn2.com
+DOMAIN-SUFFIX,bilicdn3.com
+DOMAIN-SUFFIX,bilicdn4.com
+DOMAIN-SUFFIX,bilicdn5.com
+DOMAIN-SUFFIX,hdslb.com
+DOMAIN-SUFFIX,hdslb.net
+DOMAIN,p-bstarstatic.akamaized.net
+DOMAIN,upos-bstar-mirrorakam.akamaized.net
+DOMAIN,upos-bstar1-mirrorakam.akamaized.net
+DOMAIN-SUFFIX,upos-hz-mirrorakam.akamaized.net
