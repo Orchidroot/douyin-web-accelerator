@@ -7,7 +7,9 @@ const {
   assetFingerprint,
   collectLiveStreamGroups,
   collectPlayAddressGroups,
+  createDiagnostics,
   createHostScores,
+  interventionCount,
   isLiveMediaUrl,
   reorderGroup,
 } = require("../douyin-accelerator.user.js");
@@ -62,6 +64,7 @@ test("registry matches redirected hosts by asset fingerprint", () => {
   const redirected =
     "https://redirected.example.net/tos-cn/video/abc123.mp4?ratio=1080p&token=new";
   assert.equal(assetFingerprint(redirected), assetFingerprint(URL_A));
+  assert.deepEqual(registry.candidateUrls(redirected), [URL_A, URL_B]);
   assert.deepEqual(registry.alternatives(redirected), [URL_A, URL_B]);
 
   now += 6 * 60 * 1000;
@@ -116,4 +119,30 @@ test("recognizes FLV, HLS and DASH live request URLs", () => {
   assert.equal(isLiveMediaUrl("https://pull.example.com/live/index.m3u8"), true);
   assert.equal(isLiveMediaUrl("https://pull.example.com/live/index.mpd"), true);
   assert.equal(isLiveMediaUrl("https://www.douyin.com/aweme/v1/web/feed/"), false);
+});
+
+test("normalizes persisted diagnostics and counts real interventions", () => {
+  const diagnostics = createDiagnostics(
+    {
+      startedAt: 100,
+      stallEvents: 4,
+      sourceSwitches: 1,
+      requestReroutes: 2,
+      playerRetries: 1,
+      pageReloads: 1,
+      lastAction: "自动刷新直播页面重连",
+      lastActionAt: 200,
+    },
+    999,
+  );
+
+  assert.equal(diagnostics.stallEvents, 4);
+  assert.equal(interventionCount(diagnostics), 5);
+  assert.equal(diagnostics.lastAction, "自动刷新直播页面重连");
+  assert.equal(diagnostics.lastActionAt, 200);
+
+  const invalid = createDiagnostics({ stallEvents: -1, sourceSwitches: "bad" }, 999);
+  assert.equal(invalid.startedAt, 999);
+  assert.equal(invalid.stallEvents, 0);
+  assert.equal(invalid.sourceSwitches, 0);
 });

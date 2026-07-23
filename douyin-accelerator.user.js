@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖音 Web 播放加速器
 // @namespace    https://github.com/Orchidroot/douyin-web-accelerator
-// @version      0.2.3
+// @version      0.3.0
 // @description  监测抖音网页视频和直播卡顿，并使用站点下发的备用线路恢复播放
 // @author       Orchidroot
 // @match        https://*.douyin.com/*
@@ -35,7 +35,7 @@
 })(function () {
   "use strict";
 
-  const VERSION = "0.2.3";
+  const VERSION = "0.3.0";
   const URL_LIST_KEYS = new Set(["url_list", "urlList"]);
   const PLAY_PATH_PATTERN =
     /(?:^|\.)(?:play(?:_?addr|_?url)?(?:_?265|_?h264)?|bit_?rate|playApi)(?:\.|$)/i;
@@ -340,10 +340,12 @@
       );
     }
 
-    alternatives(currentUrl, attempted = new Set(), scoreUrl = () => 0) {
+    candidateUrls(currentUrl = "") {
       this.prune();
       const normalized = normalizeUrl(currentUrl);
-      if (!normalized) return [];
+      if (!normalized) {
+        return [...new Set(this.groups.flatMap((group) => group.urls))];
+      }
       const fingerprint = assetFingerprint(normalized);
       const matching = this.groups
         .filter((group) =>
@@ -354,14 +356,51 @@
           ),
         )
         .sort((left, right) => right.seenAt - left.seenAt);
-      if (matching.length === 0) return [];
+      return [...new Set(matching.flatMap((group) => group.urls))];
+    }
 
-      return [...new Set(matching.flatMap((group) => group.urls))]
+    alternatives(currentUrl, attempted = new Set(), scoreUrl = () => 0) {
+      const normalized = normalizeUrl(currentUrl);
+      if (!normalized) return [];
+      return this.candidateUrls(normalized)
         .filter((candidate) => candidate !== normalized && !attempted.has(candidate))
         .map((candidate, index) => ({ candidate, index, score: scoreUrl(candidate) }))
         .sort((left, right) => right.score - left.score || left.index - right.index)
         .map((item) => item.candidate);
     }
+  }
+
+  function createDiagnostics(value = {}, now = Date.now()) {
+    function count(key) {
+      const item = Number(value[key]);
+      return Number.isSafeInteger(item) && item >= 0 ? item : 0;
+    }
+    return {
+      startedAt:
+        Number.isFinite(Number(value.startedAt)) && Number(value.startedAt) > 0
+          ? Number(value.startedAt)
+          : now,
+      stallEvents: count("stallEvents"),
+      sourceSwitches: count("sourceSwitches"),
+      requestReroutes: count("requestReroutes"),
+      playerRetries: count("playerRetries"),
+      pageReloads: count("pageReloads"),
+      lastAction:
+        typeof value.lastAction === "string" ? value.lastAction.slice(0, 240) : "",
+      lastActionAt:
+        Number.isFinite(Number(value.lastActionAt)) && Number(value.lastActionAt) > 0
+          ? Number(value.lastActionAt)
+          : 0,
+    };
+  }
+
+  function interventionCount(diagnostics) {
+    return (
+      diagnostics.sourceSwitches +
+      diagnostics.requestReroutes +
+      diagnostics.playerRetries +
+      diagnostics.pageReloads
+    );
   }
 
   function bufferAhead(video) {
@@ -437,9 +476,9 @@
     const attachedVideos = new WeakSet();
     let activeVideo = null;
     let lastLiveMediaUrl = "";
-    let payloadCount = 0;
-    let switchCount = 0;
     let lastMessage = "正在等待播放器";
+    let lastRerouteSignature = "";
+    let lastRerouteAt = 0;
     let ui = null;
 
     const settingsKey = "douyin-accelerator-settings-v1";
@@ -465,6 +504,43 @@
     let settings = loadSettings();
 
     const liveRecoveryKey = "douyin-accelerator-live-recovery-v1";
+    const diagnosticsKey = "douyin-accelerator-diagnostics-v1";
+
+    function loadDiagnostics() {
+      try {
+        return createDiagnostics(
+          nativeJsonParse(pageWindow.sessionStorage.getItem(diagnosticsKey) || "{}"),
+        );
+      } catch {
+        return createDiagnostics();
+      }
+    }
+
+    let diagnostics = loadDiagnostics();
+
+    function saveDiagnostics() {
+      try {
+        pageWindow.sessionStorage.setItem(diagnosticsKey, JSON.stringify(diagnostics));
+      } catch {
+        // Session storage may be disabled.
+      }
+    }
+
+    function recordDiagnostic(field, message) {
+      if (Object.hasOwn(diagnostics, field) && Number.isInteger(diagnostics[field])) {
+        diagnostics[field] += 1;
+      }
+      diagnostics.lastAction = message;
+      diagnostics.lastActionAt = Date.now();
+      saveDiagnostics();
+      setMessage(message);
+    }
+
+    function recordStallEvent() {
+      diagnostics.stallEvents += 1;
+      saveDiagnostics();
+      if (ui) ui.render();
+    }
 
     function loadLiveRecovery() {
       try {
@@ -522,7 +598,6 @@
           reorderGroup(group, (url) => hostScores.score(url));
         }
         if (videoGroups.length > 0 || liveGroups.length > 0) {
-          payloadCount += videoGroups.length + liveGroups.length;
           if (ui) ui.render();
         }
       } catch (error) {
@@ -544,6 +619,15 @@
         (candidate) => hostScores.score(candidate) > hostScores.score(current),
       );
       if (better) {
+        const signature = `${current}\n${better}`;
+        const now = Date.now();
+        if (signature !== lastRerouteSignature || now - lastRerouteAt > 30000) {
+          const oldHost = hostFromUrl(current) || "原线路";
+          const newHost = hostFromUrl(better) || "备用线路";
+          recordDiagnostic("requestReroutes", `实际改写直播请求：${oldHost} → ${newHost}`);
+          lastRerouteSignature = signature;
+          lastRerouteAt = now;
+        }
         lastLiveMediaUrl = better;
         return better;
       }
@@ -645,7 +729,6 @@
                   registry.register(videoGroups, this.responseURL || "XMLHttpRequest");
                   liveRegistry.register(liveGroups, this.responseURL || "XMLHttpRequest");
                   if (videoGroups.length > 0 || liveGroups.length > 0) {
-                    payloadCount += videoGroups.length + liveGroups.length;
                     if (ui) ui.render();
                   }
                 }
@@ -719,23 +802,27 @@
       }
     }
 
+    function beginStallEpisode(video, message) {
+      const state = getVideoState(video);
+      if (!state.waitSince) {
+        state.waitSince = pageWindow.performance.now();
+        recordStallEvent();
+      }
+      state.healthySince = 0;
+      setMessage(message);
+    }
+
     function attachVideo(video) {
       if (attachedVideos.has(video)) return;
       attachedVideos.add(video);
       getVideoState(video);
 
-      video.addEventListener("waiting", () => {
-        const state = getVideoState(video);
-        if (!state.waitSince) state.waitSince = pageWindow.performance.now();
-        state.healthySince = 0;
-        setMessage("检测到缓冲，正在观察");
-      });
-      video.addEventListener("stalled", () => {
-        const state = getVideoState(video);
-        if (!state.waitSince) state.waitSince = pageWindow.performance.now();
-        state.healthySince = 0;
-        setMessage("连接暂时停滞");
-      });
+      video.addEventListener("waiting", () =>
+        beginStallEpisode(video, "检测到缓冲，正在观察"),
+      );
+      video.addEventListener("stalled", () =>
+        beginStallEpisode(video, "连接暂时停滞"),
+      );
       video.addEventListener("playing", () => {
         clearWaiting(video, true);
         const url = currentVideoUrl(video);
@@ -759,14 +846,14 @@
       state.recovering = true;
       state.attempted.add(alternative);
       state.switches += 1;
-      switchCount += 1;
 
       const resumeAt = Number.isFinite(video.currentTime) ? video.currentTime : 0;
       const shouldPlay = !video.paused;
       const playbackRate = video.playbackRate;
       const oldHost = hostFromUrl(currentVideoUrl(video)) || "当前线路";
       const newHost = hostFromUrl(alternative) || "备用线路";
-      setMessage(`${manual ? "手动" : "自动"}切换：${oldHost} → ${newHost}`);
+      const actionMessage = `${manual ? "手动" : "自动"}切换播放源：${oldHost} → ${newHost}`;
+      setMessage(`正在${manual ? "手动" : "自动"}尝试备用线路`);
 
       const onMetadata = () => {
         try {
@@ -790,6 +877,7 @@
       try {
         video.src = alternative;
         video.load();
+        recordDiagnostic("sourceSwitches", actionMessage);
         pageWindow.setTimeout(() => {
           state.recovering = false;
         }, 8000);
@@ -866,8 +954,10 @@
       if (retryControl) {
         retryControl.click();
         state.waitSince = 0;
-        switchCount += 1;
-        setMessage(`${manual ? "手动" : "自动"}触发直播播放器重连`);
+        recordDiagnostic(
+          "playerRetries",
+          `${manual ? "手动" : "自动"}触发直播播放器重连`,
+        );
         pageWindow.setTimeout(() => {
           state.recovering = false;
         }, 5000);
@@ -902,8 +992,10 @@
       liveRecovery.timestamps.push(now);
       liveRecovery.badHost = hostFromUrl(current);
       saveLiveRecovery();
-      switchCount += 1;
-      setMessage(`${manual ? "手动" : "自动"}重连直播，页面即将刷新`);
+      recordDiagnostic(
+        "pageReloads",
+        `${manual ? "手动" : "自动"}刷新直播页面重连`,
+      );
       pageWindow.setTimeout(() => pageWindow.location.reload(), 500);
       return true;
     }
@@ -942,11 +1034,16 @@
           *{box-sizing:border-box}
           button,input{font:inherit}
           #bolt{width:44px;height:44px;border:0;border-radius:50%;cursor:pointer;background:#00d6c9;color:#082f2c;font-size:22px;box-shadow:0 8px 28px #0005}
-          #panel{display:none;position:absolute;right:0;bottom:54px;width:300px;padding:15px;color:#f4f7fb;background:#161a22f2;border:1px solid #ffffff18;border-radius:15px;box-shadow:0 16px 50px #0008;backdrop-filter:blur(14px)}
+          #panel{display:none;position:absolute;right:0;bottom:54px;width:340px;max-height:calc(100vh - 90px);overflow:auto;padding:15px;color:#f4f7fb;background:#161a22f2;border:1px solid #ffffff18;border-radius:15px;box-shadow:0 16px 50px #0008;backdrop-filter:blur(14px)}
           #panel.open{display:block}
           h2{font-size:15px;margin:0 0 4px}
           .sub{font-size:11px;color:#aeb8ca;margin-bottom:13px}
           .status{padding:10px;border-radius:10px;background:#ffffff0b;font-size:12px;line-height:1.45;word-break:break-all}
+          .effect{display:flex;align-items:center;gap:7px;margin-top:8px;padding:8px 10px;border-radius:9px;background:#ffffff0b;font-size:11px;color:#b8c3d4}
+          .effect.active{background:#00d6c91a;color:#76fff2}
+          .dot{width:7px;height:7px;border-radius:50%;background:#758096;flex:none}
+          .effect.active .dot{background:#00d6c9;box-shadow:0 0 9px #00d6c9}
+          .last-action{margin-top:7px;font-size:10px;line-height:1.4;color:#8f9bb0;word-break:break-all}
           .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
           .metric{padding:9px;border-radius:9px;background:#ffffff0b}
           .label{display:block;font-size:10px;color:#96a3b8}
@@ -963,11 +1060,17 @@
           <h2>抖音 Web 播放加速器</h2>
           <div class="sub">v${VERSION} · 仅使用页面下发的备用地址</div>
           <div id="status" class="status"></div>
+          <div id="effect" class="effect"><span class="dot"></span><span id="effectText">仅监测，尚未介入</span></div>
+          <div id="lastAction" class="last-action">最近介入：尚无</div>
           <div class="grid">
+            <div class="metric"><span class="label">当前模式</span><span id="mode" class="value">—</span></div>
             <div class="metric"><span class="label">前方缓冲</span><span id="buffer" class="value">—</span></div>
-            <div class="metric"><span class="label">已发现候选组</span><span id="groups" class="value">0</span></div>
+            <div class="metric"><span class="label">当前候选线路</span><span id="candidates" class="value">0</span></div>
             <div class="metric"><span class="label">当前线路</span><span id="hostName" class="value">—</span></div>
-            <div class="metric"><span class="label">恢复次数</span><span id="switches" class="value">0</span></div>
+            <div class="metric"><span class="label">卡顿事件</span><span id="stalls" class="value">0</span></div>
+            <div class="metric"><span class="label">实际换线</span><span id="reroutes" class="value">0</span></div>
+            <div class="metric"><span class="label">播放器重试</span><span id="retries" class="value">0</span></div>
+            <div class="metric"><span class="label">页面重连</span><span id="reloads" class="value">0</span></div>
           </div>
           <label>启用监测 <input id="enabled" type="checkbox"></label>
           <label>卡顿时自动换源 <input id="autoSwitch" type="checkbox"></label>
@@ -975,9 +1078,9 @@
           <label>积极模式（更早处理） <input id="aggressive" type="checkbox"></label>
           <div class="actions">
             <button id="recover" class="primary">立即尝试恢复</button>
-            <button id="reset">重置线路评分</button>
+            <button id="reset">清除诊断统计</button>
           </div>
-          <div class="foot">不绕过地区限制，不生成或修改播放地址签名。</div>
+          <div class="foot">统计在当前标签页刷新后保留，关闭标签页后清除。不绕过地区限制，不修改地址签名。</div>
         </section>
       `;
       document.documentElement.appendChild(host);
@@ -1006,7 +1109,9 @@
       });
       shadow.getElementById("reset").addEventListener("click", () => {
         hostScores.reset();
-        setMessage("线路评分已重置");
+        diagnostics = createDiagnostics();
+        saveDiagnostics();
+        setMessage("诊断统计和线路评分已清除");
       });
 
       ui = {
@@ -1014,15 +1119,43 @@
           const video = activeVideo;
           const ahead = video ? bufferAhead(video) : 0;
           const current = currentVideoUrl(video);
-          const displayUrl = current || (video && isLiveVideo(video) ? lastLiveMediaUrl : "");
+          const live = Boolean(video && isLiveVideo(video));
+          const displayUrl = current || (live ? lastLiveMediaUrl : "");
+          const candidateRegistry = live ? liveRegistry : registry;
+          const candidateCount = displayUrl
+            ? candidateRegistry.candidateUrls(displayUrl).length
+            : 0;
+          const interventions = interventionCount(diagnostics);
+          const actualReroutes =
+            diagnostics.sourceSwitches + diagnostics.requestReroutes;
           shadow.getElementById("status").textContent = settings.enabled
             ? lastMessage
             : "监测已暂停";
+          shadow.getElementById("effect").classList.toggle("active", interventions > 0);
+          shadow.getElementById("effectText").textContent =
+            interventions > 0
+              ? `已实际介入 ${interventions} 次`
+              : "仅监测，尚未介入";
+          shadow.getElementById("lastAction").textContent = diagnostics.lastActionAt
+            ? `最近介入：${new Date(diagnostics.lastActionAt).toLocaleTimeString()} · ${diagnostics.lastAction}`
+            : "最近介入：尚无";
+          shadow.getElementById("mode").textContent = video
+            ? live
+              ? "直播"
+              : "短视频"
+            : "等待播放器";
           shadow.getElementById("buffer").textContent = video ? `${ahead.toFixed(1)} 秒` : "—";
-          shadow.getElementById("groups").textContent = String(payloadCount);
+          shadow.getElementById("candidates").textContent = String(candidateCount);
           shadow.getElementById("hostName").textContent =
             hostFromUrl(displayUrl) || "Blob / 未知";
-          shadow.getElementById("switches").textContent = String(switchCount);
+          shadow.getElementById("stalls").textContent = String(diagnostics.stallEvents);
+          shadow.getElementById("reroutes").textContent = String(actualReroutes);
+          shadow.getElementById("retries").textContent = String(
+            diagnostics.playerRetries,
+          );
+          shadow.getElementById("reloads").textContent = String(
+            diagnostics.pageReloads,
+          );
           bolt.style.background = settings.enabled ? "#00d6c9" : "#758096";
         },
       };
@@ -1094,8 +1227,10 @@
     bufferAhead,
     collectLiveStreamGroups,
     collectPlayAddressGroups,
+    createDiagnostics,
     createHostScores,
     hostFromUrl,
+    interventionCount,
     isLiveMediaUrl,
     liveProtocolFromKey,
     normalizeLiveQuality,
