@@ -1,0 +1,11 @@
+{
+  "name": "douyin-web-accelerator",
+  "version": "0.2.1",
+  "private": true,
+  "description": "Conservative Tampermonkey playback recovery helper for Douyin Web",
+  "scripts": {
+    "check": "node --check douyin-accelerator.user.js",
+    "test": "node --test"
+  },
+  "license": "MIT"
+}
