@@ -28,6 +28,8 @@ https://raw.githubusercontent.com/Orchidroot/douyin-web-accelerator/main/rules/s
 
 这份列表只做域名分流，不包含或替换节点订阅。抖音和 B 站共用同一份规则即可；以后换节点只需改规则所选策略。详细说明见 [rules/README.md](rules/README.md)。
 
+如果 Shadowrocket 里还没有任何配置，可先导入[不含节点的直连配置](https://raw.githubusercontent.com/Orchidroot/douyin-web-accelerator/main/rules/shadowrocket-douyin-bilibili-direct.conf)。该配置只提供规则匹配，所有流量仍为直连，不会凭空产生加速效果。
+
 ## 工作方式
 
 - 在页面脚本读取播放数据时识别 `play_addr.url_list`、`playAddr.urlList` 等短视频候选地址。
