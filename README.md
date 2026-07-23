@@ -2,6 +2,12 @@
 
 一个保守型的 Tampermonkey 用户脚本，用于监测抖音网页版视频与直播卡顿，并使用抖音页面已经下发的备用播放线路恢复播放。
 
+## 致谢与来源
+
+本项目的设计思路与交互方向借鉴了 [realzza/bilibili-accelerator](https://github.com/realzza/bilibili-accelerator)（MIT License），包括在网页环境中观察播放器状态、发生卡顿时优先使用站点下发的备用 CDN 地址，以及通过悬浮面板展示运行状态。感谢原作者公开这套思路和实现。
+
+本项目针对抖音的播放数据、短视频和直播场景重新实现，并非上述项目的官方分支，双方也不存在隶属或背书关系。
+
 ## 安装
 
 1. 在 Chrome、Edge 或 Firefox 安装 Tampermonkey。
