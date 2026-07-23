@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         抖音 Web 播放加速器
 // @namespace    https://github.com/Orchidroot/douyin-web-accelerator
-// @version      0.2.2
+// @version      0.2.3
 // @description  监测抖音网页视频和直播卡顿，并使用站点下发的备用线路恢复播放
-// @author       Codex
+// @author       Orchidroot
 // @match        https://*.douyin.com/*
 // @match        https://douyin.com/*
 // @run-at       document-start
@@ -35,7 +35,7 @@
 })(function () {
   "use strict";
 
-  const VERSION = "0.2.2";
+  const VERSION = "0.2.3";
   const URL_LIST_KEYS = new Set(["url_list", "urlList"]);
   const PLAY_PATH_PATTERN =
     /(?:^|\.)(?:play(?:_?addr|_?url)?(?:_?265|_?h264)?|bit_?rate|playApi)(?:\.|$)/i;
