@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖音 Web 播放加速器
 // @namespace    https://github.com/Orchidroot/douyin-web-accelerator
-// @version      0.3.0
+// @version      0.3.1
 // @description  监测抖音网页视频和直播卡顿，并使用站点下发的备用线路恢复播放
 // @author       Orchidroot
 // @match        https://*.douyin.com/*
@@ -35,7 +35,7 @@
 })(function () {
   "use strict";
 
-  const VERSION = "0.3.0";
+  const VERSION = "0.3.1";
   const URL_LIST_KEYS = new Set(["url_list", "urlList"]);
   const PLAY_PATH_PATTERN =
     /(?:^|\.)(?:play(?:_?addr|_?url)?(?:_?265|_?h264)?|bit_?rate|playApi)(?:\.|$)/i;
@@ -276,6 +276,47 @@
     );
   }
 
+  function createLiveRerouteGate(now = () => Date.now()) {
+    let badHost = "";
+    let expiresAt = 0;
+
+    function clear() {
+      badHost = "";
+      expiresAt = 0;
+    }
+
+    function canReroute(value) {
+      if (!badHost || now() >= expiresAt) {
+        clear();
+        return false;
+      }
+      return hostFromUrl(value) === badHost;
+    }
+
+    return {
+      arm(value, ttlMs = 20000) {
+        const host = hostFromUrl(value);
+        if (!host) {
+          clear();
+          return false;
+        }
+        badHost = host;
+        expiresAt = now() + Math.max(1000, Number(ttlMs) || 0);
+        return true;
+      },
+      canReroute,
+      consume(value) {
+        if (!canReroute(value)) return false;
+        clear();
+        return true;
+      },
+      clear,
+      snapshot() {
+        return { badHost, expiresAt };
+      },
+    };
+  }
+
   function reorderGroup(group, scoreUrl) {
     if (!group || !Array.isArray(group.source) || group.source.length < 2) return false;
     const original = group.source.slice();
@@ -368,6 +409,28 @@
         .sort((left, right) => right.score - left.score || left.index - right.index)
         .map((item) => item.candidate);
     }
+  }
+
+  function selectLiveReroute(
+    currentUrl,
+    candidateRegistry,
+    rerouteGate,
+    scoreUrl = () => 0,
+  ) {
+    const current = normalizeUrl(currentUrl);
+    if (
+      !current ||
+      !candidateRegistry ||
+      !rerouteGate ||
+      !rerouteGate.canReroute(current)
+    ) {
+      return "";
+    }
+    return (
+      candidateRegistry
+        .alternatives(current, new Set(), scoreUrl)
+        .find((candidate) => !rerouteGate.canReroute(candidate)) || ""
+    );
   }
 
   function createDiagnostics(value = {}, now = Date.now()) {
@@ -471,6 +534,7 @@
     const registry = new CandidateRegistry();
     const liveRegistry = new CandidateRegistry();
     const hostScores = createHostScores();
+    const liveRerouteGate = createLiveRerouteGate();
     const nativeJsonParse = pageWindow.JSON.parse.bind(pageWindow.JSON);
     const videoStates = new WeakMap();
     const attachedVideos = new WeakSet();
@@ -481,21 +545,31 @@
     let lastRerouteAt = 0;
     let ui = null;
 
-    const settingsKey = "douyin-accelerator-settings-v1";
+    const settingsKey = "douyin-accelerator-settings-v2";
+    const legacySettingsKey = "douyin-accelerator-settings-v1";
     const defaultSettings = {
       enabled: true,
       autoSwitch: true,
       aggressive: false,
-      liveAutoReload: true,
+      liveAutoReload: false,
       maxSwitches: 2,
     };
 
     function loadSettings() {
       try {
-        return {
-          ...defaultSettings,
-          ...JSON.parse(pageWindow.localStorage.getItem(settingsKey) || "{}"),
-        };
+        const current = JSON.parse(pageWindow.localStorage.getItem(settingsKey) || "null");
+        if (current && typeof current === "object") {
+          return { ...defaultSettings, ...current };
+        }
+        const legacy = JSON.parse(
+          pageWindow.localStorage.getItem(legacySettingsKey) || "null",
+        );
+        if (!legacy || typeof legacy !== "object") return { ...defaultSettings };
+        const migrated = { ...defaultSettings };
+        for (const key of ["enabled", "autoSwitch", "aggressive", "maxSwitches"]) {
+          if (Object.hasOwn(legacy, key)) migrated[key] = legacy[key];
+        }
+        return migrated;
       } catch {
         return { ...defaultSettings };
       }
@@ -562,6 +636,11 @@
     let liveRecovery = loadLiveRecovery();
     if (liveRecovery.badHost) {
       hostScores.noteStall(`https://${liveRecovery.badHost}/`);
+      const latestReload =
+        liveRecovery.timestamps[liveRecovery.timestamps.length - 1] || 0;
+      if (Date.now() - latestReload < 60 * 1000) {
+        liveRerouteGate.arm(`https://${liveRecovery.badHost}/`, 30000);
+      }
     }
 
     function saveLiveRecovery() {
@@ -594,8 +673,10 @@
         const liveGroups = collectLiveStreamGroups(payload, nativeJsonParse);
         registry.register(videoGroups, source);
         liveRegistry.register(liveGroups, source);
-        for (const group of videoGroups) {
-          reorderGroup(group, (url) => hostScores.score(url));
+        if (settings.enabled && settings.autoSwitch) {
+          for (const group of videoGroups) {
+            reorderGroup(group, (url) => hostScores.score(url));
+          }
         }
         if (videoGroups.length > 0 || liveGroups.length > 0) {
           if (ui) ui.render();
@@ -610,15 +691,15 @@
       const current = normalizeUrl(value);
       if (!isLiveMediaUrl(current)) return current || value;
       lastLiveMediaUrl = current;
-      const alternatives = liveRegistry.alternatives(
+      if (!settings.enabled) return current;
+      const better = selectLiveReroute(
         current,
-        new Set(),
+        liveRegistry,
+        liveRerouteGate,
         (url) => hostScores.score(url),
       );
-      const better = alternatives.find(
-        (candidate) => hostScores.score(candidate) > hostScores.score(current),
-      );
       if (better) {
+        liveRerouteGate.consume(current);
         const signature = `${current}\n${better}`;
         const now = Date.now();
         if (signature !== lastRerouteSignature || now - lastRerouteAt > 30000) {
@@ -952,6 +1033,7 @@
 
       const retryControl = findLiveRetryControl();
       if (retryControl) {
+        if (current) liveRerouteGate.arm(current);
         retryControl.click();
         state.waitSince = 0;
         recordDiagnostic(
@@ -1074,7 +1156,7 @@
           </div>
           <label>启用监测 <input id="enabled" type="checkbox"></label>
           <label>卡顿时自动换源 <input id="autoSwitch" type="checkbox"></label>
-          <label>直播卡死时刷新重连 <input id="liveAutoReload" type="checkbox"></label>
+          <label>直播卡死时刷新重连（默认关闭） <input id="liveAutoReload" type="checkbox"></label>
           <label>积极模式（更早处理） <input id="aggressive" type="checkbox"></label>
           <div class="actions">
             <button id="recover" class="primary">立即尝试恢复</button>
@@ -1094,6 +1176,9 @@
         input.checked = Boolean(settings[key]);
         input.addEventListener("change", () => {
           settings[key] = input.checked;
+          if ((key === "enabled" || key === "autoSwitch") && !settings[key]) {
+            liveRerouteGate.clear();
+          }
           saveSettings();
           ui.render();
         });
@@ -1186,8 +1271,8 @@
       ) {
         const threshold = live
           ? settings.aggressive
-            ? 4500
-            : 9000
+            ? 7000
+            : 12000
           : settings.aggressive
             ? 1800
             : 4200;
@@ -1229,6 +1314,7 @@
     collectPlayAddressGroups,
     createDiagnostics,
     createHostScores,
+    createLiveRerouteGate,
     hostFromUrl,
     interventionCount,
     isLiveMediaUrl,
@@ -1236,6 +1322,7 @@
     normalizeLiveQuality,
     normalizeUrl,
     reorderGroup,
+    selectLiveReroute,
     boot,
   };
 });

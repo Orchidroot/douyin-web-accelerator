@@ -9,9 +9,11 @@ const {
   collectPlayAddressGroups,
   createDiagnostics,
   createHostScores,
+  createLiveRerouteGate,
   interventionCount,
   isLiveMediaUrl,
   reorderGroup,
+  selectLiveReroute,
 } = require("../douyin-accelerator.user.js");
 
 const URL_A = "https://cdn-a.example.com/tos-cn/video/abc123.mp4?ratio=1080p";
@@ -119,6 +121,39 @@ test("recognizes FLV, HLS and DASH live request URLs", () => {
   assert.equal(isLiveMediaUrl("https://pull.example.com/live/index.m3u8"), true);
   assert.equal(isLiveMediaUrl("https://pull.example.com/live/index.mpd"), true);
   assert.equal(isLiveMediaUrl("https://www.douyin.com/aweme/v1/web/feed/"), false);
+});
+
+test("arms live request rerouting only temporarily and consumes it once", () => {
+  let now = 1000;
+  const gate = createLiveRerouteGate(() => now);
+  const badUrl = "https://pull-a.douyincdn.com/live/room.flv?sign=a";
+  const otherHost = "https://pull-b.douyincdn.com/live/room.flv?sign=b";
+
+  assert.equal(gate.canReroute(badUrl), false);
+  assert.equal(gate.arm(badUrl, 5000), true);
+  assert.equal(gate.canReroute(badUrl), true);
+  assert.equal(gate.canReroute(otherHost), false);
+  assert.equal(gate.consume(badUrl), true);
+  assert.equal(gate.canReroute(badUrl), false);
+
+  gate.arm(badUrl, 5000);
+  now += 5000;
+  assert.equal(gate.canReroute(badUrl), false);
+});
+
+test("does not select a live reroute until recovery explicitly arms it", () => {
+  const registry = new CandidateRegistry();
+  const gate = createLiveRerouteGate(() => 1000);
+  const badUrl = "https://pull-a.douyincdn.com/live/room.flv?sign=a";
+  const alternative = "https://pull-b.douyincdn.com/live/room.flv?sign=b";
+  registry.register([{ urls: [badUrl, alternative] }]);
+
+  assert.equal(selectLiveReroute(badUrl, registry, gate, () => 0), "");
+  gate.arm(badUrl, 5000);
+  assert.equal(
+    selectLiveReroute(badUrl, registry, gate, () => 0),
+    alternative,
+  );
 });
 
 test("normalizes persisted diagnostics and counts real interventions", () => {
