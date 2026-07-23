@@ -11,6 +11,12 @@ const RULES_PATH = path.join(
   "rules",
   "shadowrocket-douyin-bilibili.list",
 );
+const DIRECT_CONFIG_PATH = path.join(
+  __dirname,
+  "..",
+  "rules",
+  "shadowrocket-douyin-bilibili-direct.conf",
+);
 
 function readRules() {
   return fs
@@ -44,4 +50,21 @@ test("combined list covers core Douyin and Bilibili traffic", () => {
   ]) {
     assert.ok(rules.has(rule), `missing ${rule}`);
   }
+});
+
+test("minimal Shadowrocket config imports the combined list without a node", () => {
+  const config = fs.readFileSync(DIRECT_CONFIG_PATH, "utf8");
+  const ruleSetUrl =
+    "https://raw.githubusercontent.com/Orchidroot/douyin-web-accelerator/main/" +
+    "rules/shadowrocket-douyin-bilibili.list";
+
+  assert.match(config, /^\[General\]$/mu);
+  assert.match(config, /^\[Rule\]$/mu);
+  assert.match(
+    config,
+    new RegExp(`^RULE-SET,${ruleSetUrl.replaceAll(".", String.raw`\.`)},DIRECT$`, "mu"),
+  );
+  assert.match(config, /^FINAL,DIRECT$/mu);
+  assert.doesNotMatch(config, /^\[(?:Proxy|Proxy Group)\]$/mu);
+  assert.doesNotMatch(config, /,(?:PROXY|REJECT)$/mu);
 });
