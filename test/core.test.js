@@ -14,6 +14,8 @@ const {
   isLiveMediaUrl,
   reorderGroup,
   selectLiveReroute,
+  throughputMbps,
+  updatePlaybackClock,
 } = require("../douyin-accelerator.user.js");
 
 const URL_A = "https://cdn-a.example.com/tos-cn/video/abc123.mp4?ratio=1080p";
@@ -161,6 +163,7 @@ test("normalizes persisted diagnostics and counts real interventions", () => {
     {
       startedAt: 100,
       stallEvents: 4,
+      candidateReorders: 2,
       sourceSwitches: 1,
       requestReroutes: 2,
       playerRetries: 1,
@@ -172,7 +175,7 @@ test("normalizes persisted diagnostics and counts real interventions", () => {
   );
 
   assert.equal(diagnostics.stallEvents, 4);
-  assert.equal(interventionCount(diagnostics), 5);
+  assert.equal(interventionCount(diagnostics), 7);
   assert.equal(diagnostics.lastAction, "自动刷新直播页面重连");
   assert.equal(diagnostics.lastActionAt, 200);
 
@@ -180,4 +183,25 @@ test("normalizes persisted diagnostics and counts real interventions", () => {
   assert.equal(invalid.startedAt, 999);
   assert.equal(invalid.stallEvents, 0);
   assert.equal(invalid.sourceSwitches, 0);
+});
+
+test("playback clock detects a frozen timeline and resets after progress", () => {
+  const initial = updatePlaybackClock({}, 12, 1000, 2800);
+  assert.equal(initial.stalled, false);
+
+  const waiting = updatePlaybackClock(initial, 12.01, 3000, 2800);
+  assert.equal(waiting.stalled, false);
+
+  const frozen = updatePlaybackClock(waiting, 12.01, 3900, 2800);
+  assert.equal(frozen.stalled, true);
+
+  const playing = updatePlaybackClock(frozen, 12.2, 4000, 2800);
+  assert.equal(playing.stalled, false);
+  assert.equal(playing.lastProgressAt, 4000);
+});
+
+test("calculates media transfer speed in megabits per second", () => {
+  assert.equal(throughputMbps(1_000_000, 1000), 8);
+  assert.equal(throughputMbps(0, 1000), 0);
+  assert.equal(throughputMbps(1000, 0), 0);
 });

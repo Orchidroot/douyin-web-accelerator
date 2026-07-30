@@ -1,8 +1,8 @@
 {
   "name": "douyin-web-accelerator",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
-  "description": "Conservative Tampermonkey playback recovery helper for Douyin Web",
+  "description": "Tampermonkey playback watchdog and recovery helper for Douyin Web",
   "scripts": {
     "check": "node --check douyin-accelerator.user.js",
     "test": "node --test"
